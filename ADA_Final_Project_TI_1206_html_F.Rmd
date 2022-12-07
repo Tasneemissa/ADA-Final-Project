@@ -1,0 +1,445 @@
+---
+title: "ADA_Final_Project_TI"
+output: html_document
+date: "2022-11-03"
+---
+```{r}
+install.packages("pacman", repos = "http://cran.us.r-project.org")
+```
+
+
+Load Packages needed throughout the project
+```{r}
+pacman::p_load(MASS, ggplot2, lmtest, sandwich, stargazer, foreign, tidyverse, boot, pscl, haven, plyr,table1,DiagrammeR,gridExtra, knitr, kableExtra, mosaic, xtable, multcomp, pander, readr, sandwich, broom)
+```
+
+
+###Research Topic: The Association between Health Insurance Type and number of cesarean section in US women between 2017-2018
+
+```{r}
+Demo<-read_xpt("/Users/tasneemissa/Downloads/DEMO_J (1).XPT")
+Reproductive_Health<-read_xpt("/Users/tasneemissa/Downloads/RHQ_J (1).XPT")
+Health_Insurance<-read_xpt("/Users/tasneemissa/Downloads/HIQ_J.XPT")
+```
+
+
+#Merge the three datasets 
+```{r}
+HI_Birth<-merge(Demo, Reproductive_Health,
+               by= "SEQN")
+HI_Birth<-merge(HI_Birth, Health_Insurance,
+               by= "SEQN")
+```
+
+#Data Management
+
+Based on DAG and previous research, below is variables of interest that affect the exposure and the outcome
+
+
+Demographics Data that needs to be recoded
+1. Race/Ethnicity 
+  RIDRETH3 - Race/Hispanic Origin/ NH Asian
+Recoded (1-White (Non-Hispanic), 2-Black or African American (Non-Hispanic), 3-Asian (Non-Hispanic)
+, 4 -Hispanic, 5-Other, Multi-Racial)
+
+2. Age
+  RIDAGEYR - Age at screening in years
+Recoded to Age - filter the reproductive age group who answered the questions the reproductive health questions- 20-44
+  
+3. Marital Status 
+  DMDMARTL - Marital Status
+1 Married Recoded as 1		
+2-Widowed, 3-Divorced, 4-Separated, 5-Never married, 6-Living with partner recoded
+as 0
+
+4. Household Income 
+  INDHHIN2 - Annual Household Income
+Low income - 	Less than $54,900
+Middle income -$50,000 - $99,999
+Upper income	More than $100,000
+
+5. RHQ160 - How many times have been pregnant?
+Recoded as Number of pregnancies 
+
+6. DIQ175S - Gestational diabetes
+Recoded as DIQ175S - Gestational diabetes
+
+```{r}
+HI_Birth_1 <- HI_Birth %>%
+  mutate(Race = case_when(
+    RIDRETH3== 3 ~ 0 , 
+    RIDRETH3== 4 ~ 1,
+    RIDRETH3== 6 ~ 2 , 
+    RIDRETH3== 1 |  RIDRETH3== 2 ~ 3,
+    RIDRETH3 == 7 ~4 ))
+
+HI_Birth_2 <- HI_Birth_1%>%
+  mutate(Age = RIDAGEYR) %>% 
+  filter(Age>=20 & Age<=44)
+
+HI_Birth_3 <- HI_Birth_2 %>%
+  mutate(Marital_Status = case_when(
+    DMDMARTL== 2 | DMDMARTL==3 |DMDMARTL== 4 |DMDMARTL== 5 |DMDMARTL== 6 ~ 0 , 
+    DMDMARTL== 1 ~ 1,
+     ))
+HI_Birth_4 <- HI_Birth_3 %>%
+  mutate(Household_Income = case_when(
+    INDHHIN2== 1 |INDHHIN2==2 |INDHHIN2== 3 |INDHHIN2==4 |INDHHIN2== 5 |INDHHIN2== 6 |INDHHIN2== 7 | INDHHIN2==8 ~ 1 , 
+    INDHHIN2== 9 | INDHHIN2== 10 |INDHHIN2== 14 ~ 2,
+    INDHHIN2==  15 ~ 3
+     ))
+
+HI_Birth_5 <- HI_Birth_4 %>%
+  mutate(Gestational_Diabetes = case_when(RHQ162 == 1 ~ 1,
+                                          RHQ162 == 2 ~ 0))
+
+HI_Birth_6<- HI_Birth_5 %>%
+  mutate(Pregnancies = RHQ160)%>%
+  filter(Pregnancies>=1 & Pregnancies<=11)
+
+```
+
+
+HIQ011 -Covered by health insurance
+Yes - 1
+No - 0
+```{r}
+HI_Birth_7 <- HI_Birth_6 %>%
+  mutate(Covered_HI = case_when(HIQ011== 1~ 1,
+                            HIQ011== 2 ~ 0
+                             ))
+```
+
+#Exposure Variable 
+Condense Health Insurance Type  ->public insurance, private insurance
+
+HIQ031A - Covered by private insurance - 2
+HIQ031C - Covered by Medi-Gap - 2
+
+
+HIQ031D - Covered by Medicaid - 1
+HIQ031F - Covered by military health care - 1
+HIQ031H - Covered by state-sponsored health plan - 1
+HIQ031I - Covered by other government insurance - 1
+
+```{r}
+HI_Birth_8 <- HI_Birth_7 %>%
+  mutate(HI_Type = case_when(
+    HIQ031A== 14 | HIQ031C == 16~ 2, 
+    HIQ031D == 17 | HIQ031F ==19 | HIQ031H == 21 | HIQ031I ==22~ 1,
+     ))
+```
+
+#Outcome Variable 
+
+Birth Delivery Type
+RHQ169 - How many cesarean deliveries?
+```{r}
+HI_Birth_10 <- HI_Birth_8 %>%
+  mutate(CSection = case_when(
+    RHQ169 >0 ~ 1, 
+    RHQ169 == 0 ~ 0,
+     RHQ169 == 77 ~ 0
+     ))
+
+```
+
+
+
+#Descriptive Table 
+```{r}
+HI_Birth_10$Race <- 
+  factor(HI_Birth_10$Race, levels=c(0,1,2,3,4),
+         labels=c("White", "Black", "Asian", "Hispanic","Multi-Racial"))
+
+  
+HI_Birth_10$Marital_Status<- 
+  factor(HI_Birth_10$Marital_Status, levels=c(0,1),
+         labels=c("Not Married", "Married"))
+
+HI_Birth_10$Household_Income<- 
+  factor(HI_Birth_10$Household_Income, levels=c(1,2,3),
+         labels=c("Less than $54,900", "$55,000- $99,999", "More than $100,000"))
+
+HI_Birth_10$CSection<- 
+  factor(HI_Birth_10$CSection, levels=c(0,1),
+         labels=c("No C-Section", "C-Section"))
+
+HI_Birth_10$HI_Type<- 
+  factor(HI_Birth_10$HI_Type, levels=c(1,2),
+         labels=c("Public Insurance","Private Insurance"))
+
+HI_Birth_10$Gestational_Diabetes <- 
+  factor(HI_Birth_10$Gestational_Diabetes, levels=c(0,1), 
+  labels=c("No Gestational Diabetes", "Gestational Diabetes"))
+
+HI_Birth_10$Race<-setLabel(HI_Birth_10$Race, "Race/Ethnicity")
+HI_Birth_10$Pregnancies<-setLabel(HI_Birth_10$Pregnancies, "Number of Pregnancies")
+HI_Birth_10$Age<-setLabel(HI_Birth_10$Age, "Age")
+HI_Birth_10$Marital_Status<-setLabel(HI_Birth_10$Marital_Status, "Marital Status")
+HI_Birth_10$HI_Type<-setLabel(HI_Birth_10$HI_Type, "Health Insurance Type")
+HI_Birth_10$Gestational_Diabetes<-setLabel(HI_Birth_10$Gestational_Diabetes, "Gestational Diabetes")
+
+units(HI_Birth_10$Age) <- "years"
+HI_Birth_11<- HI_Birth_10 %>% 
+  filter(!is.na(CSection))
+table1(~ Age + Pregnancies + Race + Marital_Status + Household_Income + HI_Type + Gestational_Diabetes | CSection, data=HI_Birth_11, overall="Total" )
+```
+Looking at table I, the average age of women who underwent cesarean section is 34.8 compared to women who did not have cesarean section is 34.7. However, the median age is slightly higher in women who did not have C-sections at 36 years compared to 35 years. The mean number of pregnancies for women who had c-sections is 3.39 compared to 3.85 pregnancies for women who had c-sections. 
+
+With race/ethnicity, the two highest who underwent cesarean sections are Hispanic women and white women. On the other hand, black and white women had the highest percentage with no c-section deliveries. Furthermore, the women who has c-section deliveries' marital status was relatively equal at 49.8% (not married) vs 50.2 (married). However, higher percentage of women had no c-section deliveries at 56.4%. 
+
+With household income, lower percentage of women has c-section in the income $55,000-$99,999 and more than $100,000 at 17.8% and 15.6% respectively. In addition, lower percentage of women at 36.4% underwent c-sections had private insurance than publuc insurance at 42.2%. Similarly, women with gestational diabetes had higher percentage of c-section deliveries ar 17.3% compared to 8.4% without it. 
+
+
+#Figure I 
+```{r}
+grViz("digraph flowchart {
+
+      # node definitions with substituted label text
+      node [fontname = Helvetica, shape = rectangle, fontsize=10] 
+      # notes indicate how many boxes you will have in your diagram. Since I have two sets of exclusions, I will have three nodes.
+      tab1 [label = '@@1'] # starting
+      tab2 [label = '@@2'] # exclusion 1
+      tab3 [label = '@@3'] # exclusion 2
+      
+      # edge definitions with the node IDs are used to indicate how the rectangle boxes flow from each other. This is a simple flow chart but I could create branching instead as below
+      tab1 -> tab2 -> tab3 
+}
+      #This set of code provides the text in each rectangle box.
+      [1]: 'Records received from NHANES for cesarean section deliveries, n=3286'
+      [2]: 'Extracting women of reproductive age (20-44), n=1057'
+      [3]: 'Excluding individuals with missing data on variables used in the analysis n=450'
+      ")
+
+
+
+```
+#Data Visualization
+
+Histogram, density plot, and boxplot on the distribution of C-sections and Health Insurance 
+
+```{r}
+HI_Birth_11 <- HI_Birth_10%>%
+  mutate(CD = RHQ169) %>% 
+  filter(CD>=0 & CD<=7)
+
+ggplot(HI_Birth_11, aes(x=CD)) +
+  geom_histogram(fill="pink", color="black")+
+  labs(title="Cesarean Section Distribution",x="Cesarean Deliveries", y = "Count")+
+  theme_classic()
+```
+
+```{r}
+HI_Birth_11 %>% 
+  filter(!is.na(HI_Type)) %>% 
+  ggplot(aes(x=HI_Type)) +
+  geom_bar(fill="pink", color="black", na.rm=TRUE)
+```
+
+
+```{r}
+ggplot(HI_Birth_11, aes(x=HI_Type, y=CD)) +
+  geom_boxplot()+
+  labs(title="Cesarean Section Distribution",x="Cesarean Deliveries", y = "Density")+
+  theme_classic()
+
+ggplot(HI_Birth_11, aes(CD))+
+    geom_density()+
+  labs(title="Cesarean Section Distribution",x="Cesarean Deliveries", y = "Density")+
+  theme_classic()
+```
+Calculate Mean and Variance of the dependent variable
+
+```{r}
+
+HI_Birth_10 %>% 
+  filter(!is.na(HI_Type)) %>% 
+  group_by(as.factor(HI_Type)) %>% 
+  summarize(mean=mean(RHQ169, na.rm=TRUE))
+
+```
+##Data Analysis 
+
+#Hypothesis: 
+Women with public health insurance will have higher number of cesarean section than women with private health insurance.
+
+Because the output is count, poisson analysis will be done. 
+
+##Poisson Analysis 
+
+#1. Run a Poisson model using health insurance type as the exposure variable of interest and number of c-sections as the outcome variable.
+
+Model 1 - without offset
+Model 1.o - with offset - standardize based on pregnancies 
+```{r}
+# Without offset
+model1 <- glm(RHQ169 ~  HI_Type , family = poisson,
+               data = HI_Birth_10)
+
+summary(model1)
+
+#with offset - standardize based on pregnancies 
+model1.o <- glm(RHQ169 ~  HI_Type, offset = log(Pregnancies), family = poisson,
+               data = HI_Birth_10)
+
+summary(model1.o)
+
+```
+Without offset, the health insurance type is statistically significant, but when accounting for the number of pregnancies a woman has, the health insurance type is not statistically significant.
+
+
+#2. Exponentiate the coefficients and get the confidence intervals. Does the incidence rate of number of c-sections betwen 2017-2018 vary by health insurance type? Interpret the result.
+```{r, echo=FALSE, eval = FALSE}
+glm.RR <- function(GLM.RESULT, digits = 2) {
+
+    if (GLM.RESULT$family$family == "binomial") {
+        LABEL <- "OR"
+    } else if (GLM.RESULT$family$family == "poisson") {
+        LABEL <- "RR"
+    } else {
+        stop("Not logistic or Poisson model")
+    }
+
+    COEF      <- stats::coef(GLM.RESULT)
+    CONFINT   <- stats::confint(GLM.RESULT)
+    TABLE     <- cbind(coef=COEF, CONFINT)
+    TABLE.EXP <- round(exp(TABLE), digits)
+
+    colnames(TABLE.EXP)[1] <- LABEL
+
+    TABLE.EXP
+}
+glm.RR(model1)
+glm.RR(model1.o)
+
+```
+Yes it varies by health insurance type without the offset. The incidence rate of cesarean sections between 2017-2018 is 25% (95% CI 0.60 to 0.94) lower in women with private insurance than in women with public health insurance.
+
+No, it does not vary when the number of pregnancies is accounted for. Therefore, the incidence rate of cesarean sections between 2017-2018 is 11% (95% CI 0.71 to 1.12) lower in women with private insurance than in women with public health insurance.
+
+
+
+#3. Based on DAG, the minimal sufficient adjustment sets for estimating the total effect of Health Insurance Type on Cesarean Section are advance maternal age, marital status, and race. These variables are confounders and are added to the model below.
+```{r}
+model2 <- glm(RHQ169 ~  HI_Type + Race + Marital_Status + Age + offset(log(Pregnancies)),
+               data = HI_Birth_10)
+
+summary(model2)
+```
+
+None of the variables are statistically significant 
+
+
+#4. Likelihood ratio test is performed to compare model 1 and model 2. 
+```{r}
+lrtest(model1.o, model2)
+
+```
+The logliklihood and the significant p-value suggest that model 1 is a better fit than model 2.
+
+
+
+##Negative Binomial Models
+
+#5. Run a Negative Binomial model using health insurance type as the exposure variable of interest and number of c-sections as the outcome variable, in addition to accounting for the number of pregnancies.
+
+```{r}
+model3 <- glm.nb(RHQ169 ~  HI_Type+ offset(log(Pregnancies)),
+               data = HI_Birth_11)
+
+summary(model3)
+```
+
+Accounting for number of pregnancies, private health insurance is not statistically significant compared to public health insurance.
+
+standard error from private health insurance is  0.11513 from Poisson
+standard error from private health insurance is  0.14565 from negbin
+
+Compare models with the lrtest. Is the mean = variance assumption violated?
+```{r}
+lrtest(model1.o, model3)
+lrtest(model2, model4)
+
+```
+The logliklihood and the significant p-value suggest that the negative binomial model is better and that there is overdispersion.
+
+
+#6. Run a Negative Binomial model using health insurance type as the exposure variable of interest and number of c-sections as the outcome variable while adjusting for age, marital Status, and race.
+
+```{r}
+model4 <- glm.nb(RHQ169 ~  HI_Type + Race + Marital_Status + Age + offset(log(Pregnancies)),
+               data = HI_Birth_10)
+
+summary(model4)
+
+```
+Age, health insurance type are not statistically signifficant.
+
+
+
+#7.Get the IRR and 95% CI for the negative binomial model with Health Insurance Type as a predictor. Interpret the result.
+
+#8. Get the IRR and 95% CI for the negative binomial model with Health Insurance Type as a predictor after adjusting for age, marital Status, and race. Interpret the result.
+```{r}
+mod3 <- cbind(Estimate = exp(coef(model3)), exp(confint(model3)))
+mod3
+mod4 <- cbind(Estimate = exp(coef(model4)), exp(confint(model4)))
+mod4
+```
+The incidence rate of cesarean sections between 2017-2018 is 10% (95% CI 0.66 to 1.22) lower in women with private insurance than in women with public health insurance.
+
+The incidence rate of cesarean sections between 2017-2018 is 17% (95% CI 0.59 to 1.14) lower in women with private insurance than in women with public health insurance after adjusting for age, marital status, and race.
+
+
+#Robust Standard Error and Estimates
+```{r}
+coeftest(model1.o,  vcov = vcovHC, type = "HC3")
+coeftest(model2,  vcov = vcovHC, type = "HC3")
+stargazer(model1.o, model3, title="Model Comparison",
+          type="text",align=TRUE,single.row=TRUE, digits=6)
+stargazer(model2, model4, title="Model Comparison",
+          type="text",align=TRUE,single.row=TRUE, digits=6)
+```
+
+
+#Effect Modification 
+
+Research has shown that women over 35 are more likely to get c-sections due the complications during pregnancies, so we will stratify age.
+
+Age - 20-34
+Age - 35-44 --> Advanced Maternal Age
+```{r}
+#Stratify by age
+HI_Birth_13 <- HI_Birth_11%>%
+  mutate(Age_1 = RIDAGEYR) %>% 
+  filter(Age>=20 & Age<=34)
+
+HI_Birth_14 <- HI_Birth_11%>%
+  mutate(Age_2 = RIDAGEYR) %>% 
+  filter(Age>=35 & Age<=44)
+
+#All age
+model7 <- glm.nb(RHQ169 ~  HI_Type*Age + offset(log(Pregnancies)),
+               data = HI_Birth_11)
+summary(model7)
+
+mod6 <- cbind(Estimate = exp(coef(model7)), exp(confint(model7)))
+mod6
+
+#20-34
+model5 <- glm.nb(RHQ169 ~  HI_Type*Age_1 + offset(log(Pregnancies)),
+               data = HI_Birth_13)
+
+summary(model5)
+
+#35-44
+model6 <- glm.nb(RHQ169 ~  HI_Type*Age_2 + offset(log(Pregnancies)),
+               data = HI_Birth_14)
+
+summary(model6)
+```
+None of the results are statistically significant.
+
+Overall, when the number of pregnancies are accounted for, the association between health insurance type and number of cesarean deliveries in US between 2017-2018 is not statistically significant. 
+
